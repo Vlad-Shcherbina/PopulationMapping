@@ -17,9 +17,9 @@ public:
         cout.flush();
         int reply;
         cin >> reply;
-        debug2(x1, y1);
-        debug2(x2, y2);
-        debug(reply);
+        // debug2(x1, y1);
+        // debug2(x2, y2);
+        // debug(reply);
         assert(reply >= 0);
         return reply;
     }

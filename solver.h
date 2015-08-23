@@ -85,6 +85,7 @@ public:
     int W;
     int H;
     int num_queries;
+    int max_pop;
 
     vector<vector<bool>> land;
     CumulativeRectangle land_count;
@@ -133,22 +134,18 @@ public:
         vector<Split> result;
         Block b1, b2;
 
-        //if (b.x2 - b.x1 > b.y2 - b.y1) {
-        debug2(b.center_x, b.center_y);
-        debug2(b.variance_x, b.variance_y);
-        if (b.variance_x > b.variance_y) {
-            for (int x = b.x1 + 1; x < b.x2 - 1; x++) {
-                b1 = create_block(b.x1, b.y1, x, b.y2, 0);
-                b2 = create_block(x, b.y1, b.x2, b.y2, 0);
-                result.emplace_back(b1, b2);
-            }
-        } else {
-            for (int y = b.y1 + 1; y < b.y2 - 1; y++) {
-                b1 = create_block(b.x1, b.y1, b.x2, y, 0);
-                b2 = create_block(b.x1, y, b.x2, b.y2, 0);
-                result.emplace_back(b1, b2);
-            }
+        for (int x = b.x1 + 1; x <= b.x2 - 1; x++) {
+            b1 = create_block(b.x1, b.y1, x, b.y2, 0);
+            b2 = create_block(x, b.y1, b.x2, b.y2, 0);
+            result.emplace_back(b1, b2);
         }
+
+        for (int y = b.y1 + 1; y <= b.y2 - 1; y++) {
+            b1 = create_block(b.x1, b.y1, b.x2, y, 0);
+            b2 = create_block(b.x1, y, b.x2, b.y2, 0);
+            result.emplace_back(b1, b2);
+        }
+
         return result;
     }
 
@@ -171,12 +168,11 @@ public:
 
     Split split_block(const Block &b) {
         auto splits = find_splits(b);
-        //debug(splits);
+        assert(!splits.empty());
         auto ps = max_element(splits.begin(), splits.end(),
             [this](const Split &s1, const Split &s2) {
                 return rank_split(s1) < rank_split(s2);
             });
-        debug(ps - splits.begin());
 
         Block b1, b2;
         b1 = ps->first;
@@ -185,9 +181,71 @@ public:
         b1.pop = query_region(b1.x1, b1.y1, b1.x2, b1.y2);
         b2.pop = b.pop - b1.pop;
 
+        double area_fraction = 1.0 * b1.area / b.area;
+        double pop_fraction = 1.0 * b1.pop / b.pop;
+        if (pop_fraction > area_fraction) {
+            area_fraction = 1.0 - area_fraction;
+            pop_fraction = 1.0 - pop_fraction;
+        }
+
+        /*cerr << "## split[] = {\"area_fraction\": " << area_fraction
+             << ", \"pop_fraction\": " << pop_fraction
+             << ", \"area\": " << b.area
+             << ", \"pop\": " << b.pop
+             << ", \"w\": " << (b.x2 - b.x1)
+             << ", \"h\": " << (b.y2 - b.y1)
+             << "}" << endl;*/
+
         //assert(b2.pop == query_region(b2.x1, b2.y1, b2.x2, b2.y2));
 
         return {b1, b2};
+    }
+
+    double expected_split_effect(const Block &block, double slope) {
+        if (block.x2 - block.x1 <= 1 && block.y2 - block.y1 <= 1)
+            return -1e10;
+
+        double s = 1.0 * block.pop / block.area;
+        double s1 = 1.0 * (0.4 * block.pop) / (0.5 * block.area);
+        double s2 = 1.0 * (0.6 * block.pop) / (0.5 * block.area);
+
+        if (s1 < slope && s2 < slope) {
+            return 0;
+        }
+
+        if (s1 > slope && s2 > slope) {
+            return 0;
+        }
+        if (s < slope) {
+            double result = 0.6 * block.pop / slope - 0.5 * block.area;
+            // debug(result);
+            return result;
+        } else {
+            double result = - 0.4 * block.pop / slope + 0.5 * block.area;
+            // debug(result);
+            return result;
+        }
+        //return block.pop;
+    }
+
+    pair<double, double> get_current_slope_and_area(vector<Block> blocks) const {
+        sort(blocks.begin(), blocks.end(),
+            [](const Block &b1, const Block &b2) {
+                return (int64_t)b1.pop * b2.area < (int64_t)b2.pop * b1.area;
+            });
+
+        int pop = 0;
+        double lerp_area = 0;
+        for (const auto &b : blocks) {
+            pop += b.pop;
+            if (pop >= max_pop) {
+                lerp_area += 1.0 * (max_pop - (pop - b.pop)) * b.area / b.pop;
+                //debug(lerp_area);
+                return {1.0 * b.pop / b.area, lerp_area};
+            }
+            lerp_area += b.area;
+        }
+        assert(false);
     }
 
     vector<string> mapPopulation(
@@ -196,7 +254,8 @@ public:
         int total_population) {
 
         num_queries = 0;
-        int max_pop = total_population * max_percentage / 100;
+        max_pop = (int64_t)total_population * max_percentage / 100;
+
 
         H = world_map.size();
         W = world_map.front().size();
@@ -226,20 +285,39 @@ public:
             return land[y][x] ? y * y : 0;
         });
 
+        cerr << "## "; debug(W);
+        cerr << "## "; debug(H);
+        cerr << "## "; debug(total_population);
+        cerr << "## "; debug(max_percentage);
+        int64_t land_area = land_count.get(0, 0, W, H);
+        cerr << "## "; debug(land_area);
+
         vector<Block> blocks;
         blocks.push_back(create_block(0, 0, W, H, total_population));
 
-        for (int i = 0; i < 22; i++) {
+        for (int i = 0; i < 200; i++) {
+            auto sa = get_current_slope_and_area(blocks);
+            double slope = sa.first;
+            double area = sa.second;
+
             auto m = max_element(blocks.begin(), blocks.end(),
-                [](const Block &b1, const Block &b2) {
-                return b1.pop < b2.pop;
+                [=](const Block &b1, const Block &b2) {
+                return expected_split_effect(b1, slope) <
+                       expected_split_effect(b2, slope);
             });
             Block b = *m;
+            double effect = expected_split_effect(b, slope);
+            debug2(area, effect);
+            if (effect < area * 0.004) {
+                break;
+            }
+
             blocks.erase(m);
             auto s = split_block(b);
             blocks.push_back(s.first);
             blocks.push_back(s.second);
         }
+        cerr << "## "; debug(num_queries);
 
         sort(blocks.begin(), blocks.end(),
             [](const Block &b1, const Block &b2) {
@@ -285,7 +363,6 @@ public:
         }
 
         debug(max_pop);
-
         cerr << "Perfect score: " << lerp_area * pow(0.996, num_queries) << endl;
 
         return result;
