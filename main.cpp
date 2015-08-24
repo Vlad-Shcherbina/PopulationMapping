@@ -31,7 +31,15 @@ public:
 #include "solver.h"
 
 
-int main() {
+int main(int argc, char **argv) {
+    PopulationMapping pm;
+
+    if (argc > 1) {
+        assert(argc == 3);
+        pm.rank_split_alpha = stod(argv[1]);
+        pm.rank_split_beta = stod(argv[2]);
+    }
+
     int max_percentage;
     cin >> max_percentage;
     debug(max_percentage);
@@ -52,7 +60,7 @@ int main() {
     cin >> total_population;
     debug(total_population);
 
-    auto result = PopulationMapping().mapPopulation(
+    auto result = pm.mapPopulation(
         max_percentage, world_map, total_population);
     assert(result.size() == h);
     cout << result.size() << endl;

@@ -8,6 +8,7 @@ from timeit import default_timer
 import multiprocessing
 import pprint
 import json
+import random
 
 from math import *
 
@@ -16,7 +17,8 @@ def run_solution(command, seed):
     try:
         start = default_timer()
         p = subprocess.Popen(
-            'java -jar tester.jar -exec "{}" '
+            'java -classpath tester/patched_tester.jar PopulationMappingVis '
+            '-exec "{}" '
             '-novis -seed {}'.format(command, seed),
             shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
@@ -39,7 +41,11 @@ def run_solution(command, seed):
             m = re.match(r'## (\w+)(\[\])? = (.*)$', line)
             if m is not None:
                 key = m.group(1)
-                value = ast.literal_eval(m.group(3))
+                try:
+                    value = ast.literal_eval(m.group(3))
+                except Exception as e:
+                    print(e)
+                    continue
                 if m.group(2):
                     result.setdefault(key, [])
                     result[key].append(value)
@@ -47,7 +53,14 @@ def run_solution(command, seed):
                     assert key not in result
                     result[key] = value
 
-        assert 'score' in result
+        #assert 'score' in result
+        assert result['score'] > 0
+
+        if 'land_area' in result and 'max_percentage' in result:
+            result['adjusted_score'] = log(result['score'] /
+                (result['land_area'] * pow(result['max_percentage'] * 0.01, 0.6)))
+        else:
+            print('qwasdf')
         return result
 
     except Exception as e:
@@ -61,27 +74,32 @@ def worker(task):
 def main():
     subprocess.check_call(
         #'g++ --std=c++11 -Wall -Wno-sign-compare -O2 main.cc -o main',
-        'g++ --std=c++0x -W -Wall -Wno-sign-compare '
+        'g++ --std=c++0x -W -Wall -Wno-sign-compare -D NDEBUG'
         '-O2 -s -pipe -mmmx -msse -msse2 -msse3 main.cpp -o main',
         shell=True)
-    command = './main'
+    command = './main {} {}'
 
-    tasks = [(command, seed) for seed in range(1, 1000)]
+    # tasks = [
+    #     (command.format(random.uniform(1.8, 2.2), random.uniform(0.9, 1.1)), seed)
+    #     for seed in range(1, 20000)]
+    tasks = [
+        (command.format(2, 1), seed)
+        for seed in range(1, 2000)]
 
     map = multiprocessing.Pool(10).imap
 
-    average_log_score = 0
-    with open('data/results.json', 'w') as fout:
+    average_adjusted_score = 0
+    with open('data/results_.json', 'w') as fout:
         for result in map(worker, tasks):
             print(result['seed'], result['score'])
-            average_log_score += log(result['score'])
+            average_adjusted_score += result.get('adjusted_score', -100000)
 
             result = json.dumps(result)
             assert '\n' not in result
             fout.write(result + '\n')
 
-    average_log_score /= len(tasks)
-    print(average_log_score)
+    average_adjusted_score /= len(tasks)
+    print(average_adjusted_score * 100)
 
 
 if __name__ == '__main__':
