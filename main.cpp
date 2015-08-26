@@ -33,6 +33,7 @@ public:
 
 int main(int argc, char **argv) {
     PopulationMapping pm;
+    vector<int> xs = {1, 2};
 
     if (argc > 1) {
         assert(argc == 3);

@@ -38,7 +38,7 @@ def run_solution(command, seed):
             if m is not None:
                 result['score'] = float(m.group(1))
 
-            m = re.match(r'## (\w+)(\[\])? = (.*)$', line)
+            m = re.match(r'## ([\w.]+)(\[\])? = (.*)$', line)
             if m is not None:
                 key = m.group(1)
                 try:
@@ -71,25 +71,28 @@ def worker(task):
     return run_solution(*task)
 
 
-def main():
+def build():
     subprocess.check_call(
         #'g++ --std=c++11 -Wall -Wno-sign-compare -O2 main.cc -o main',
         'g++ --std=c++0x -W -Wall -Wno-sign-compare -D NDEBUG'
         '-O2 -s -pipe -mmmx -msse -msse2 -msse3 main.cpp -o main',
         shell=True)
+
+
+def main():
     command = './main {} {}'
 
     # tasks = [
     #     (command.format(random.uniform(1.8, 2.2), random.uniform(0.9, 1.1)), seed)
     #     for seed in range(1, 20000)]
     tasks = [
-        (command.format(2, 1), seed)
-        for seed in range(1, 2000)]
+        (command.format(0.85, 0.65), seed)
+        for seed in range(1, 500)]
 
-    map = multiprocessing.Pool(10).imap
+    map = multiprocessing.Pool(12).imap
 
     average_adjusted_score = 0
-    with open('data/results_.json', 'w') as fout:
+    with open('data/results.json', 'w') as fout:
         for result in map(worker, tasks):
             print(result['seed'], result['score'])
             average_adjusted_score += result.get('adjusted_score', -100000)

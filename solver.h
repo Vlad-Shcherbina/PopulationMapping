@@ -23,6 +23,11 @@ using namespace std;
 #define debug2(x, y) cerr << #x " = " << (x) << ", " #y " = " << y << endl;
 
 
+double sqr(double x) {
+    return x * x;
+}
+
+
 struct Block {
     int x1, y1, x2, y2;
     int area;
@@ -33,6 +38,12 @@ struct Block {
     double variance_x;
     double variance_y;
 
+    double stdev_x;
+    double stdev_y;
+
+    double grad_x;
+    double grad_y;
+
     double variance() const {
         return variance_x + variance_y;
     }
@@ -40,8 +51,82 @@ struct Block {
     int rect_area() const {
         return (x2 - x1) * (y2 - y1);
     }
+
+    void transpose() {
+        swap(x1, y1);
+        swap(x2, y2);
+        swap(center_x, center_y);
+        swap(variance_x, variance_y);
+        swap(stdev_x, stdev_y);
+        swap(grad_x, grad_y);
+    }
+
+    bool touch(const Block &other) const {
+        if (x1 == other.x1 &&
+            y1 == other.y1 &&
+            x2 == other.x2 &&
+            y2 == other.y2)
+            return false;
+        return
+            x2 >= other.x1 &&
+            x1 <= other.x2 &&
+            y2 >= other.y1 &&
+            y1 <= other.y2;
+    }
 };
 
+
+vector<Block> find_neighbors(const Block &b, const vector<Block> &blocks) {
+    vector<Block> result;
+    copy_if(blocks.begin(), blocks.end(), back_inserter(result),
+        [&](const Block &q) {
+            assert(q.touch(b) == b.touch(q));
+            return q.touch(b);
+        });
+    return result;
+}
+
+double estimate_density_gradient_x(const Block &b, const vector<Block> &neighbors) {
+    double base_density = 1.0 * b.pop / b.area;
+
+    double covar = 0;
+    double var = 0;
+
+    for (const auto &q : neighbors) {
+        double delta_x = q.center_x - b.center_x;
+        double delta_density = 1.0 * q.pop / q.area - base_density;
+
+        double discount = 1.0 / sqrt(sqr(delta_x) + sqr(q.center_y - b.center_y));
+        delta_x *= discount;
+        delta_density *= discount;
+
+        // debug2(delta_x, delta_density);
+
+        covar += delta_x * delta_density;
+        var += sqr(delta_x);
+    }
+
+    var += sqr(b.stdev_x);
+
+    if (var > 1e-6)
+        return covar / var * b.stdev_x / b.pop * b.area;
+    return 0.0;
+}
+
+double estimate_density_gradient_y(Block b, vector<Block> neighbors) {
+    b.transpose();
+    for (auto &n : neighbors)
+        n.transpose();
+    return estimate_density_gradient_x(b, neighbors);
+}
+
+void update_all_gradients(vector<Block> &blocks) {
+    for (auto &b : blocks) {
+        auto neighbors = find_neighbors(b, blocks);
+        b.grad_x = estimate_density_gradient_x(b, neighbors);
+        b.grad_y = estimate_density_gradient_y(b, neighbors);
+    }
+}
 
 std::ostream& operator<<(std::ostream &out, const Block &b) {
   out << "Block(";
@@ -81,18 +166,69 @@ struct CumulativeRectangle {
 };
 
 
-double sqr(double x) {
-    return x * x;
-}
-
-
 struct Split {
     Block parent;
     Block child1;
     Block child2;
 
+    double bets;
+
     Split(const Block &parent, const Block &child1, const Block &child2)
         : parent(parent), child1(child1), child2(child2) {
+    }
+
+    void dump_datapoint(
+            double slope, double expected_effect, double actual_effect) const {
+        Split(*this).destructive_dump_datapoint(
+            slope, expected_effect, actual_effect);
+    }
+
+    void canonicalize_for_evaluation() {
+        if (child1.y2 == child2.y1) {
+            child1.transpose();
+            child2.transpose();
+            parent.transpose();
+        }
+        assert(child1.x2 == child2.x1);
+
+        bool sw = child1.area > child2.area;
+        if (sw) {
+            // TODO: mirror gradient
+            swap(child1, child2);
+        }
+    }
+
+    void destructive_dump_datapoint(
+            double slope, double expected_effect, double actual_effect) {
+
+        canonicalize_for_evaluation();
+
+        cerr << "## split[] = {\"hz\": " << 0
+             // << ", \"parent.area\": " << parent.area
+             << ", \"parent.pop\": " << parent.pop
+             << ", \"child1.area\": " << child1.area
+             << ", \"child2.area\": " << child2.area
+             << ", \"parent.stdev_x\": " << parent.stdev_x
+             << ", \"parent.stdev_y\": " << parent.stdev_y
+             << ", \"child1.stdev_x\": " << child1.stdev_x
+             << ", \"child1.stdev_y\": " << child1.stdev_y
+             << ", \"child2.stdev_x\": " << child2.stdev_x
+             << ", \"child2.stdev_y\": " << child2.stdev_y
+             << ", \"actual_effect\": " << actual_effect
+             << ", \"expected_effect\": " << expected_effect
+             << ", \"bets\": " << bets
+             << ", \"slope\": " << slope
+             << "}" << endl;
+    }
+
+    double predictor(double slope) const {
+        return Split(*this).destructive_predictor(slope);
+    }
+
+    double destructive_predictor(double slope) {
+        canonicalize_for_evaluation();
+        return 0;
+        //#include "predictor.h"
     }
 };
 
@@ -135,6 +271,7 @@ public:
             - 2.0 * sx * block.center_x
             + 1.0 * block.area * block.center_x * block.center_x;
         block.variance_x /= a;
+        block.stdev_x = sqrt(block.variance_x);
 
         block.center_y = sy / a;
         block.variance_y =
@@ -142,6 +279,7 @@ public:
             - 2.0 * sy * block.center_y
             + 1.0 * block.area * block.center_y * block.center_y;
         block.variance_y /= a;
+        block.stdev_y = sqrt(block.variance_y);
 
         return block;
     }
@@ -171,6 +309,18 @@ public:
     double rank_split(const Split &s) const {
         Block b1 = s.child1;
         Block b2 = s.child2;
+
+        double grad;
+        if (b1.x2 == b2.x1) {
+            grad = s.parent.grad_x;
+        } else {
+            assert(b1.y2 == b2.y1);
+            grad = s.parent.grad_y;
+        }
+        //grad = grad * abs(grad);
+        //debug(grad);
+        //assert(abs(grad) < 0.5);
+        //grad *= 0.9;
         //return 1.0 * b1.rect_area() * b2.rect_area();
         //return 1.0 * b1.area * b2.area;
 
@@ -186,9 +336,10 @@ public:
         //      (b1.variance_x + b1.variance_y + b2.variance_x + b2.variance_y);
 
         return - pow(b1.variance_x + b1.variance_y, rank_split_alpha) *
-                 pow(b1.area, rank_split_beta)
+                 pow(b1.area, rank_split_beta) * pow(max(1 - grad, 0.5), 4)
                - pow(b2.variance_x + b2.variance_y, rank_split_alpha) *
-                 pow(b2.area, rank_split_beta) + 0.1*uniform_real_distribution<double>()(gen);
+                 pow(b2.area, rank_split_beta) * pow(max(1 + grad, 0.5), 4)
+               + 0.01*uniform_real_distribution<double>()(gen);
     }
 
     void pick_candidate_splits(const Block &b, vector<Split> &results) const {
@@ -213,23 +364,12 @@ public:
         b1.pop = query_region(b1.x1, b1.y1, b1.x2, b1.y2);
         b2.pop = b.pop - b1.pop;
 
-        double area_fraction = 1.0 * b1.area / b.area;
-        double pop_fraction = 1.0 * b1.pop / b.pop;
+        //double area_fraction = 1.0 * b1.area / b.area;
+        //double pop_fraction = 1.0 * b1.pop / b.pop;
         /*if (pop_fraction > area_fraction) {
             area_fraction = 1.0 - area_fraction;
             pop_fraction = 1.0 - pop_fraction;
         }*/
-
-        cerr << "## split[] = {\"area_fraction\": " << area_fraction
-             << ", \"pop_fraction\": " << pop_fraction
-             << ", \"area\": " << b.area
-             << ", \"pop\": " << b.pop
-             << ", \"w\": " << (b.x2 - b.x1)
-             << ", \"h\": " << (b.y2 - b.y1)
-             << ", \"variance\": " << b.variance()
-             << ", \"variance1\": " << b1.variance()
-             << ", \"variance2\": " << b2.variance()
-             << "}" << endl;
 
         //assert(b2.pop == query_region(b2.x1, b2.y1, b2.x2, b2.y2));
 
@@ -237,13 +377,20 @@ public:
     }
 
     double expected_split_effect(
-        const Split& split, double slope) {
+        const Split& split, double slope) const {
 
         const Block& block = split.parent;
         const Block& b1 = split.child1;
 
         if (block.area <= 1)
             return -1e10;
+
+        /*double pred = split.predictor(slope);
+        if (pred < 0)
+            pred = 0;
+        if (pred > block.area)
+            pred = block.area;
+        return pred;*/
 
         double ave = 0;
         for (int j = 0; j < prediction.front().size(); j++) {
@@ -323,6 +470,24 @@ public:
         assert(false);
     }
 
+    static vector<Block> apply_split(
+            const vector<Block> blocks, const Split &split) {
+        vector<Block> result = blocks;
+        auto it = std::remove_if(result.begin(), result.end(),
+                [=](const Block &b) {
+                    return b.x1 == split.parent.x1 &&
+                           b.y1 == split.parent.y1 &&
+                           b.x2 == split.parent.x2 &&
+                           b.y2 == split.parent.y2;
+                });
+        assert(it + 1 == result.end());
+        result.erase(it, result.end());
+
+        result.push_back(split.child1);
+        result.push_back(split.child2);
+        return result;
+    }
+
     vector<string> mapPopulation(
         int max_percentage,
         vector<string> world_map,
@@ -378,11 +543,24 @@ public:
             double slope = sa.first;
             double area = sa.second;
 
+            update_all_gradients(blocks);
+
             vector<Split> candidate_splits;
             for (const auto &block : blocks) {
                 pick_candidate_splits(block, candidate_splits);
             }
             assert(!candidate_splits.empty());
+
+            ///////// For training
+
+            // for (auto candidate_split : candidate_splits) {
+            //     update_split_population(candidate_split);
+            //     double actual_effect = get_current_slope_and_area(
+            //         apply_split(blocks, candidate_split)).second - area;
+            //     candidate_split.dump_datapoint(slope, actual_effect);
+            // }
+
+            ////////////
 
             auto m = max_element(candidate_splits.begin(), candidate_splits.end(),
                 [=](const Split &s1, const Split &s2) {
@@ -390,29 +568,37 @@ public:
                        expected_split_effect(s2, slope);
             });
 
-            Split s = *m;
-            //Block b = *m;
-            double effect = expected_split_effect(s, slope);
+            Split split = *m;
+            double effect = expected_split_effect(split, slope);
             debug2(area, effect);
             if (i >= 6 && effect < area * 0.004) {
                 break;
             }
 
-            update_split_population(s);
-            //blocks.erase(m);
-            blocks.erase(
-                std::remove_if(blocks.begin(), blocks.end(),
-                    [=](const Block &b) {
-                        return b.x1 == s.parent.x1 &&
-                               b.y1 == s.parent.y1 &&
-                               b.x2 == s.parent.x2 &&
-                               b.y2 == s.parent.y2;
-                    }),
-                blocks.end());
+            // ====================
+            cerr << "******" << endl;
+            //auto neighbors = find_neighbors(split.parent, blocks);
+            debug(split.parent);
+            //debug(neighbors);
+            // double grad_x =
+            //     estimate_density_gradient_x(split.parent, neighbors);
+            // double grad_y =
+            //     estimate_density_gradient_y(split.parent, neighbors);
+            debug2(split.parent.grad_x, split.parent.grad_y);
+            cerr << "******" << endl;
+            //-------------------
 
-            //auto s = split_block(b);
-            blocks.push_back(s.child1);
-            blocks.push_back(s.child2);
+            update_split_population(split);
+
+            blocks = apply_split(blocks, split);
+
+            double actual_effect =
+                get_current_slope_and_area(blocks).second - area;
+
+            // TODO: take maximum with best actual effect of all candidates
+            split.bets = area * 0.004;
+
+            split.dump_datapoint(slope, effect, actual_effect);
         }
         cerr << "## "; debug(num_queries);
 
@@ -445,7 +631,7 @@ public:
                 int worst = b.pop / (8 * (W + H)) + 1;
                 for (k = lands.size(); k >= 1; k--) {
                     double q = (double)k * b.pop / b.area
-                        + 1.0 * sigma * sqrt(min(k, worst));
+                        + 1.5 * sigma * sqrt(min(k, worst));
                     if (q < max_pop - pop)
                         break;
                 }

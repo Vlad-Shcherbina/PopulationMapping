@@ -39,8 +39,11 @@ def main():
     ys = []
     colors = []
     for s in splits:
-        xs.append(s.area_fraction)
-        ys.append(s.pop_fraction)
+        #xs.append(s.area_fraction)
+        #ys.append(s.pop_fraction)
+        xs.append(s.predicted_effect)
+        ys.append(s.actual_effect)
+
         #a1 = s.area_fraction * s.area
         #a2 = s.area - a1
         #variance_drop = s.variance - \
@@ -50,11 +53,16 @@ def main():
 
     #colors = quantilize(colors)
 
-    pylab.scatter(
+    #fig = pylab.figure()
+    ax = pylab.gca()
+
+    ax.scatter(
         xs, ys, c=colors,
-        s=0.5,
+        s=1.5,
         linewidths=(0,),
         cmap='cool')
+    #ax.set_yscale('log')
+    #ax.set_xscale('log')
 
 
     pylab.savefig('splits.png', dpi=140)
