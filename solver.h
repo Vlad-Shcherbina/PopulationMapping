@@ -303,8 +303,12 @@ public:
         return result;
     }
 
-    double rank_split_alpha = 2.0;
-    double rank_split_beta = 1.0;
+    // (2, 0)
+    // (0.85, 0.65)
+    double rank_split_alpha = 0.643;
+    double rank_split_beta = 0.689;
+    double grad_gamma = 1.0;
+    bool settings_overridden = false;
 
     double rank_split(const Split &s) const {
         Block b1 = s.child1;
@@ -317,6 +321,7 @@ public:
             assert(b1.y2 == b2.y1);
             grad = s.parent.grad_y;
         }
+        grad *= grad_gamma;
         //grad = grad * abs(grad);
         //debug(grad);
         //assert(abs(grad) < 0.5);
@@ -535,9 +540,44 @@ public:
         int64_t land_area = land_count.get(0, 0, W, H);
         cerr << "## "; debug(land_area);
 
-        vector<Block> blocks;
-        blocks.push_back(create_block(0, 0, W, H, total_population));
+        Block root = create_block(0, 0, W, H, total_population);
 
+        cerr << "## variance_x = " << root.variance_x << endl;
+        cerr << "## variance_y = " << root.variance_y << endl;
+
+        double land_density = 1.0 * root.area / (root.variance_x + root.variance_y);
+        int land_density_bucket;
+        if (land_density < 0.55501615055087494)
+            land_density_bucket = 0;
+        else if (land_density < 1.1598149637452826)
+            land_density_bucket = 1;
+        else if (land_density < 1.8599203684413681)
+            land_density_bucket = 2;
+        else if (land_density < 2.616729006467776)
+            land_density_bucket = 3;
+        else
+            land_density_bucket = 4;
+        cerr << "## "; debug(land_density_bucket);
+
+        int percentage_bucket = 97 - max_percentage;
+        percentage_bucket *= percentage_bucket;
+        percentage_bucket /= (96*96 + 4) / 5;
+        assert(percentage_bucket >= 0);
+        assert(percentage_bucket < 5);
+        cerr << "## "; debug(percentage_bucket);
+
+        if (!settings_overridden) {
+            map<pair<int, int>, vector<double>> per_bucket_settings =
+{{{0, 0}, {0.62, 1.815, 1.579}}, {{0, 1}, {0.795, 1.672, 1.198}}, {{0, 2}, {1.024, 1.1, 0.75}}, {{0, 3}, {1.153, 1.784, 1.273}}, {{0, 4}, {0.62, 1.815, 1.579}}, {{1, 0}, {0.986, 1.573, 0.844}}, {{1, 1}, {1.487, 1.023, 1.473}}, {{1, 2}, {1.172, 1.318, 1.071}}, {{1, 3}, {1.231, 1.141, 0.769}}, {{1, 4}, {1.153, 1.784, 1.273}}, {{2, 0}, {1.487, 1.023, 1.473}}, {{2, 1}, {1.61, 0.905, 0.947}}, {{2, 2}, {1.124, 0.696, 0.666}}, {{2, 3}, {1.064, 1.368, 1.875}}, {{2, 4}, {0.643, 0.689, 1}}, {{3, 0}, {0.769, 0.744, 0.736}}, {{3, 1}, {0.654, 1.07, 1.157}}, {{3, 2}, {0.643, 0.689, 1}}, {{3, 3}, {0.643, 0.689, 1}}, {{3, 4}, {0.849, 0.651, 1.084}}, {{4, 0}, {0.769, 0.744, 0.736}}, {{4, 1}, {0.643, 0.689, 1}}, {{4, 2}, {0.643, 0.689, 1}}, {{4, 3}, {0.769, 0.744, 0.736}}, {{4, 4}, {0.849, 0.651, 1.084}}}
+            ;
+            auto q = per_bucket_settings.at(make_pair(percentage_bucket, land_density_bucket));
+            rank_split_alpha = q[0];
+            rank_split_beta = q[1];
+            grad_gamma = q[2];
+        }
+
+        vector<Block> blocks;
+        blocks.push_back(root);
         for (int i = 0; i < 200; i++) {
             auto sa = get_current_slope_and_area(blocks);
             double slope = sa.first;
@@ -598,7 +638,7 @@ public:
             // TODO: take maximum with best actual effect of all candidates
             split.bets = area * 0.004;
 
-            split.dump_datapoint(slope, effect, actual_effect);
+            //split.dump_datapoint(slope, effect, actual_effect);
         }
         cerr << "## "; debug(num_queries);
 

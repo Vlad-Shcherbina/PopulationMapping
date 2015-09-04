@@ -36,9 +36,11 @@ int main(int argc, char **argv) {
     vector<int> xs = {1, 2};
 
     if (argc > 1) {
-        assert(argc == 3);
+        assert(argc == 4);
         pm.rank_split_alpha = stod(argv[1]);
         pm.rank_split_beta = stod(argv[2]);
+        pm.grad_gamma = stod(argv[3]);
+        pm.settings_overridden = true;
     }
 
     int max_percentage;
